@@ -175,14 +175,15 @@ def pid_control():
         prev_movement = current_movement
         if (left_pwm > 0 and right_pwm > 0): current_movement = 'forward'
         elif (left_pwm < 0 and right_pwm < 0): current_movement = 'backward'
+        elif (left_pwm < 0 and right_pwm > 0): current_movement = 'turnleft'
+        elif (left_pwm > 0 and right_pwm < 0): current_movement = 'turnright'
         elif (left_pwm == 0 and right_pwm == 0): current_movement = 'stop'
-        else: current_movement = 'turn'
         
         if not use_PID:
             target_left_pwm = left_pwm
             target_right_pwm = right_pwm
         else:
-            if current_movement == 'forward' or current_movement == 'backward':
+            if current_movement == 'forward' or current_movement == 'backward' or current_movement == 'turnleft'or current_movement == 'turnright':
                 
                 error = left_count - right_count
                 proportional = KP * error
@@ -192,14 +193,22 @@ def pid_control():
                 correction = proportional + integral + derivative
                 correction = max(-MAX_CORRECTION, min(correction, MAX_CORRECTION))
                 last_error = error
-                            
-                if current_movement == 'backward':
-                    correction = -correction
 
-                target_left_pwm = left_pwm - correction
-                target_right_pwm = right_pwm + correction               
+                if current_movement == 'forward':
+                    target_left_pwm = left_pwm - correction
+                    target_right_pwm = right_pwm + correction        
+                elif current_movement == 'backward':       
+                    target_left_pwm = left_pwm + correction
+                    target_right_pwm = right_pwm - correction
+                elif current_movement == 'turnleft':
+                    target_left_pwm = left_pwm + correction
+                    target_right_pwm = right_pwm + correction 
+                elif current_movement == 'turnright':
+                    target_left_pwm = left_pwm - correction
+                    target_right_pwm = right_pwm - correction 
+
             else:
-                # Reset when stopped or turning
+                # Reset when stopped
                 integral = 0
                 last_error = 0
                 reset_encoder()
