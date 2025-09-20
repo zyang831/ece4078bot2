@@ -39,7 +39,7 @@ Ki_rot = 0
 Kd_rot = 0
 ROT_TOL_DEG = 1.5           # Stop when |error| <= tolerance
 ROT_TOL_RAD = math.radians(ROT_TOL_DEG)
-MAX_ROT_PWM = 40            # Cap rotational output PWM
+MAX_ROT_PWM = 60            # Cap rotational output PWM
 ROT_SETTLE_RATE = math.radians(5.0)  # rad/s threshold for "nearly stopped"
 ROT_SETTLE_TIME = 0.15      # seconds to stay within tolerance before declaring done
 ROT_MAX_TIME = 5.0  # seconds max allowed for a rotation
