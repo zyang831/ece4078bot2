@@ -34,7 +34,7 @@ TICKS_PER_REV = 20          # Encoder ticks per wheel revolution (effective edge
 DIST_PER_TICK = math.pi * WHEEL_DIAMETER_M / TICKS_PER_REV
 
 # TODO: Tune Rotation PID defaults - UPDATED GAINS
-Kp_rot = 6.0    # Reduced from 20 - less aggressive
+Kp_rot = 10.0    # Reduced from 20 - less aggressive
 Ki_rot = 0.1    # Small integral for steady-state accuracy
 Kd_rot = 1.0    # Damping term
 
