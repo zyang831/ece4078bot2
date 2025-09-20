@@ -13,9 +13,9 @@ HOST = '0.0.0.0'
 WHEEL_PORT = 8000
 CAMERA_PORT = 8001
 PID_CONFIG_PORT = 8002
-ROTATE_PORT = 8003           # New: rotation command server (relative angle in degrees)
-PID_ROT_CONFIG_PORT = 8004   # New: rotation PID config server
-ROTATE_STATUS_PORT = 8005    # New: rotation status query server
+# ROTATE_PORT = 8003           # New: rotation command server (relative angle in degrees)
+PID_ROT_CONFIG_PORT = 8003   # New: rotation PID config server
+# ROTATE_STATUS_PORT = 8005    # New: rotation status query server
 
 # Pins
 RIGHT_MOTOR_ENA = 18
@@ -34,19 +34,11 @@ TICKS_PER_REV = 20          # Encoder ticks per wheel revolution (effective edge
 DIST_PER_TICK = math.pi * WHEEL_DIAMETER_M / TICKS_PER_REV
 
 # TODO: Tune Rotation PID defaults
-Kp_rot = 20  
-Ki_rot = 0.1 
-Kd_rot = 0
-ROT_TOL_DEG = 2          # Stop when |error| <= tolerance
-ROT_TOL_RAD = math.radians(ROT_TOL_DEG)
-MAX_ROT_PWM = 40            # Cap rotational output PWM
-ROT_SETTLE_RATE = math.radians(5.0)  # rad/s threshold for "nearly stopped"
-ROT_SETTLE_TIME = 0.15      # seconds to stay within tolerance before declaring done
-ROT_MAX_TIME = 5.0  # seconds max allowed for a rotation
+KP_rot, KI_rot, KD_rot = 0, 0, 0
 
 # PID Constants (default values, will be overridden by client)
 use_PID = 0
-KP, Ki, KD = 0, 0, 0
+KP, KI, KD = 0, 0, 0
 MAX_CORRECTION = 30  # Maximum PWM correction value
 
 # Global variables
@@ -59,25 +51,6 @@ RAMP_RATE = 250  # PWM units per second (adjust this value to tune ramp speed)
 MIN_RAMP_THRESHOLD = 15  # Only ramp if change is greater than this
 MIN_PWM_THRESHOLD = 15
 current_movement, prev_movement = 'stop', 'stop'
-
-###### New: control mode and rotation state
-control_mode = 'velocity'   # 'velocity' (existing) or 'rotate' (angle control)
-rot_target_rad = 0.0
-rot_integral = 0.0
-rot_last_error = 0.0
-rot_last_theta = 0.0
-rot_last_time = None
-rot_in_progress = False
-rot_done = False
-theta_rad = 0.0             # Integrated heading (relative within a rotation command)
-last_left_count = 0         # For incremental delta counts
-last_right_count = 0
-rot_start_time = None
-
-def rot_debug(msg):
-    if DEBUG_ROT:
-        print(f"[ROTDBG] {msg}")
-DEBUG_ROT = True
 
 def setup_gpio():
     GPIO.setmode(GPIO.BCM)
@@ -193,43 +166,11 @@ def apply_min_threshold(pwm_value, min_threshold):
     else:
         return pwm_value
 
-##################### Rotational PID Helpers #####################
-def counts_to_dtheta_rad(dleft, dright):
-    # dtheta = (sr - sl) / baseline
-    sl = dleft * DIST_PER_TICK
-    sr = dright * DIST_PER_TICK
-    return (sr - sl) / BASELINE_M
-
-def rotation_begin():
-    # Prepare rotation state (do not reset encoders; we integrate deltas)
-    global rot_integral, rot_last_error, theta_rad, rot_last_theta, rot_last_time
-    global last_left_count, last_right_count, rot_in_progress, rot_done, rot_start_time
-    rot_integral = 0.0
-    rot_last_error = 0.0
-    theta_rad = 0.0
-    rot_last_theta = 0.0
-    rot_last_time = monotonic()
-    last_left_count = left_count
-    last_right_count = right_count
-    rot_in_progress = True
-    rot_done = False
-    rot_start_time = monotonic()
-    rot_debug(f"BEGIN target_rad={rot_target_rad:.4f} left_count={left_count} right_count={right_count}")
-
-def rotation_finish():
-    global rot_in_progress, rot_done, control_mode
-    rot_in_progress = False
-    rot_done = True
-    control_mode = 'velocity'
-    reset_encoder()
-    rot_debug(f"FINISH theta_rad={theta_rad:.4f} target_rad={rot_target_rad:.4f} error_rad={(rot_target_rad-theta_rad):.4f}")
-
 ###################################################################
 def pid_control():
     # Only applies for forward/backward, not turning
     global left_pwm, right_pwm, left_count, right_count, use_PID, KP, KI, KD, prev_movement, current_movement
-    global control_mode, rot_target_rad, rot_integral, rot_last_error, theta_rad
-    global last_left_count, last_right_count, rot_last_theta, rot_last_time
+    global last_left_count, last_right_count
 
     integral = 0
     last_error = 0
@@ -255,63 +196,11 @@ def pid_control():
         elif (left_pwm > 0 and right_pwm < 0): current_movement = 'turnright'
         elif (left_pwm == 0 and right_pwm == 0): current_movement = 'stop'
 
-        if control_mode == 'rotate':
-            # Incremental encoder integration
-            dleft = left_count - last_left_count
-            dright = right_count - last_right_count
-            last_left_count = left_count
-            last_right_count = right_count
-
-            dtheta = counts_to_dtheta_rad(dleft, dright)
-            theta_rad += dtheta
-
-            error = rot_target_rad - theta_rad
-            rot_integral += error * dt
-            rot_integral = max(-MAX_ROT_PWM, min(rot_integral, MAX_ROT_PWM))
-            d_error = (error - rot_last_error) / dt
-            u = Kp_rot * error + Ki_rot * rot_integral + Kd_rot * d_error
-            rot_last_error = error
-
-            u = max(-MAX_ROT_PWM, min(u, MAX_ROT_PWM))
-
-            target_left_pwm = -u
-            target_right_pwm = +u
-
-            final_left_pwm = apply_min_threshold(target_left_pwm, MIN_PWM_THRESHOLD)
-            final_right_pwm = apply_min_threshold(target_right_pwm, MIN_PWM_THRESHOLD)
-            set_motors(final_left_pwm, final_right_pwm)
-
-            now = current_time
-            dtheta_rate = (theta_rad - rot_last_theta) / max((now - rot_last_time), 1e-3)
-            rot_last_theta = theta_rad
-            rot_last_time = now
-
-            within_error = abs(error) <= ROT_TOL_RAD
-            nearly_still = abs(dtheta_rate) <= ROT_SETTLE_RATE
-
-            if within_error and nearly_still:
-                if not hasattr(pid_control, "_settle_start") or pid_control._settle_start is None:
-                    pid_control._settle_start = now
-                elif (now - pid_control._settle_start) >= ROT_SETTLE_TIME:
-                    set_motors(0, 0)
-                    pid_control._settle_start = None
-                    rotation_finish()
-            else:
-                pid_control._settle_start = None
-                print(f"[ROT] within_error={within_error}, nearly_still={nearly_still}, error_rad={error:.4f}, dtheta_rate={dtheta_rate:.4f}")
-            if rot_start_time is not None and (current_time - rot_start_time) > ROT_MAX_TIME:
-                print("[ROT] Timeout reached, forcing finish.")
-                set_motors(0,0)
-                rotation_finish()
-            time.sleep(0.01)
-            continue
-
-        # VELOCITY MODE: existing behavior (with straight-line/turn correction)
         if not use_PID:
             target_left_pwm = left_pwm
             target_right_pwm = right_pwm
         else:
-            if current_movement in ('forward','backward','turnleft','turnright'):
+            if current_movement == 'forward' or current_movement == 'backward':
                 error = left_count - right_count
                 proportional = KP * error
                 integral += KI * error * dt
@@ -327,12 +216,24 @@ def pid_control():
                 elif current_movement == 'backward':       
                     target_left_pwm = left_pwm + correction
                     target_right_pwm = right_pwm - correction
-                elif current_movement == 'turnleft':
-                    target_left_pwm = left_pwm + correction
-                    target_right_pwm = right_pwm + correction 
-                elif current_movement == 'turnright':
+            
+            elif current_movement == 'turnleft' or current_movement == 'turnright':
+                error = left_count - right_count
+                proportional = KP_rot * error
+                integral += KI_rot * error * dt
+                integral = max(-MAX_CORRECTION, min(integral, MAX_CORRECTION))  # Anti-windup
+                derivative = KD_rot * (error - last_error) / dt if dt > 0 else 0
+                correction = proportional + integral + derivative
+                correction = max(-MAX_CORRECTION, min(correction, MAX_CORRECTION))
+                last_error = error
+
+                if current_movement == 'turnleft':
                     target_left_pwm = left_pwm - correction
-                    target_right_pwm = right_pwm - correction 
+                    target_right_pwm = right_pwm + correction        
+                elif current_movement == 'turnright':       
+                    target_left_pwm = left_pwm - correction
+                    target_right_pwm = right_pwm + correction
+
             else:
                 # Reset when stopped (velocity mode only)
                 integral = 0
@@ -546,64 +447,6 @@ def wheel_server():
     
     server_socket.close()
 ###################################################################################################
-def rotation_server():
-    global control_mode, rot_target_rad
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((HOST, ROTATE_PORT))
-    server_socket.listen(1)
-    print(f"Rotation server started on port {ROTATE_PORT} (radians)")
-    while running:
-        try:
-            client_socket, _ = server_socket.accept()
-            try:
-                data = client_socket.recv(4)
-                if not data or len(data) != 4:
-                    client_socket.sendall(struct.pack("!i", 0))
-                    client_socket.close()
-                    continue
-                target_rad = struct.unpack("!f", data)[0]
-                rot_debug(f"COMMAND received target_rad={target_rad:.4f}")
-                rot_target_rad = target_rad
-                control_mode = 'rotate'
-                rotation_begin()
-                client_socket.sendall(struct.pack("!i", 1))
-            except:
-                try:
-                    client_socket.sendall(struct.pack("!i", 0))
-                except:
-                    pass
-            finally:
-                client_socket.close()
-        except Exception as e:
-            print(f"Rotation server error: {e}")
-    server_socket.close()
-
-def rotation_status_server():
-    # Respond with: in_progress(int), done(int), current_rad(float), target_rad(float)
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((HOST, ROTATE_STATUS_PORT))
-    server_socket.listen(1)
-    print(f"Rotation status server started on port {ROTATE_STATUS_PORT} (radians)")
-    while running:
-        try:
-            client_socket, _ = server_socket.accept()
-            try:
-                in_progress = 1 if rot_in_progress else 0
-                done = 1 if rot_done else 0
-                current_rad = float(theta_rad)
-                target_rad = float(rot_target_rad) if rot_in_progress or rot_done else 0.0
-                payload = struct.pack("!iiff", in_progress, done, current_rad, target_rad)
-                client_socket.sendall(payload)
-            except Exception:
-                pass
-            finally:
-                client_socket.close()
-        except Exception as e:
-            print(f"Rotation status server error: {e}")
-    server_socket.close()
-
 def pid_rot_config_server():
     global Kp_rot, Ki_rot, Kd_rot
     
@@ -619,9 +462,9 @@ def pid_rot_config_server():
             try:
                 data = client_socket.recv(12)
                 if data and len(data) == 12:
-                    kp, ki, kd = struct.unpack("!fff", data)
-                    Kp_rot, Ki_rot, Kd_rot = float(kp), float(ki), float(kd)
+                    Kp_rot, Ki_rot, Kd_rot = struct.unpack("!fff", data)
                     print(f"Updated rotation PID: Kp={Kp_rot}, Ki={Ki_rot}, Kd={Kd_rot}")
+                    
                     response = struct.pack("!i", 1)
                 else:
                     response = struct.pack("!i", 0)
