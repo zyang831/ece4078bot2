@@ -35,7 +35,7 @@ DIST_PER_TICK = math.pi * WHEEL_DIAMETER_M / TICKS_PER_REV
 
 # TODO: Tune Rotation PID defaults
 Kp_rot = 20  
-Ki_rot = 0 
+Ki_rot = 0.1 
 Kd_rot = 0
 ROT_TOL_DEG = 5           # Stop when |error| <= tolerance
 ROT_TOL_RAD = math.radians(ROT_TOL_DEG)
