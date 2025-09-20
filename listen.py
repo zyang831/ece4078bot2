@@ -198,7 +198,7 @@ def counts_to_dtheta_rad(dleft, dright):
     # dtheta = (sr - sl) / baseline
     sl = dleft * DIST_PER_TICK
     sr = dright * DIST_PER_TICK
-    return (sr - sl) / BASELINE_M
+    return (sl - sr) / BASELINE_M
 
 def rotation_begin():
     # Prepare rotation state (do not reset encoders; we integrate deltas)
