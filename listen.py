@@ -278,8 +278,8 @@ def pid_control():
             u = max(-MAX_ROT_PWM, min(u, MAX_ROT_PWM))
 
             # Optional simple ramp for rotation (reuse linear ramp if desired)
-            target_left_pwm = -u
-            target_right_pwm = +u
+            target_left_pwm = u
+            target_right_pwm = -u
 
             # Apply min threshold to overcome stiction
             final_left_pwm = apply_min_threshold(target_left_pwm, MIN_PWM_THRESHOLD)
