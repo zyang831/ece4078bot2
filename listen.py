@@ -37,7 +37,7 @@ DIST_PER_TICK = math.pi * WHEEL_DIAMETER_M / TICKS_PER_REV
 Kp_rot = 20  
 Ki_rot = 0.1 
 Kd_rot = 0
-ROT_TOL_DEG = 5           # Stop when |error| <= tolerance
+ROT_TOL_DEG = 2          # Stop when |error| <= tolerance
 ROT_TOL_RAD = math.radians(ROT_TOL_DEG)
 MAX_ROT_PWM = 40            # Cap rotational output PWM
 ROT_SETTLE_RATE = math.radians(5.0)  # rad/s threshold for "nearly stopped"
@@ -273,8 +273,8 @@ def pid_control():
 
             u = max(-MAX_ROT_PWM, min(u, MAX_ROT_PWM))
 
-            target_left_pwm = -u
-            target_right_pwm = +u
+            target_left_pwm = +u
+            target_right_pwm = -u
 
             final_left_pwm = apply_min_threshold(target_left_pwm, MIN_PWM_THRESHOLD)
             final_right_pwm = apply_min_threshold(target_right_pwm, MIN_PWM_THRESHOLD)
