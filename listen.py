@@ -273,8 +273,8 @@ def pid_control():
 
             u = max(-MAX_ROT_PWM, min(u, MAX_ROT_PWM))
 
-            target_left_pwm = +u
-            target_right_pwm = -u
+            target_left_pwm = -u
+            target_right_pwm = +u
 
             final_left_pwm = apply_min_threshold(target_left_pwm, MIN_PWM_THRESHOLD)
             final_right_pwm = apply_min_threshold(target_right_pwm, MIN_PWM_THRESHOLD)
