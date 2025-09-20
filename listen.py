@@ -221,6 +221,7 @@ def rotation_finish():
     rot_in_progress = False
     rot_done = True
     control_mode = 'velocity'
+    reset_encoder()
     rot_debug(f"FINISH theta_rad={theta_rad:.4f} target_rad={rot_target_rad:.4f} error_rad={(rot_target_rad-theta_rad):.4f}")
 
 ###################################################################
@@ -273,8 +274,8 @@ def pid_control():
 
             u = max(-MAX_ROT_PWM, min(u, MAX_ROT_PWM))
 
-            target_left_pwm = +u
-            target_right_pwm = -u
+            target_left_pwm = -u
+            target_right_pwm = +u
 
             final_left_pwm = apply_min_threshold(target_left_pwm, MIN_PWM_THRESHOLD)
             final_right_pwm = apply_min_threshold(target_right_pwm, MIN_PWM_THRESHOLD)
