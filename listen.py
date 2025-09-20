@@ -47,7 +47,7 @@ Kd_vel = 1.0    # Smooth velocity tracking
 FEEDFORWARD_GAIN = 40.0  # PWM per rad/s
 
 # Improved tolerances - UPDATED
-ROT_TOL_DEG = 1.0           # Tighter tolerance
+ROT_TOL_DEG = 5.0           # Tighter tolerance
 ROT_TOL_RAD = math.radians(ROT_TOL_DEG)
 MAX_ROT_PWM = 50            # Increased for better performance
 ROT_SETTLE_RATE = math.radians(2.0)  # Slower settle requirement
@@ -65,7 +65,7 @@ left_pwm, right_pwm = 0, 0
 left_count, right_count = 0, 0
 prev_left_state, prev_right_state = None, None
 use_ramping = True
-RAMP_RATE = 250  # PWM units per second (adjust this value to tune ramp speed)
+RAMP_RATE = 150  # PWM units per second (adjust this value to tune ramp speed)
 MIN_RAMP_THRESHOLD = 15  # Only ramp if change is greater than this
 MIN_PWM_THRESHOLD = 15
 current_movement, prev_movement = 'stop', 'stop'
