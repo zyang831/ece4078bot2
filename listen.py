@@ -375,8 +375,8 @@ def pid_control():
             base_pwm = wheel_speed_diff * FEEDFORWARD_GAIN  # Feedforward gain
             correction_pwm = angular_control_output
             
-            target_left_pwm = -(base_pwm + correction_pwm)
-            target_right_pwm = +(base_pwm + correction_pwm)
+            target_left_pwm = +(base_pwm + correction_pwm)
+            target_right_pwm = -(base_pwm + correction_pwm)
             
             # Apply constraints
             target_left_pwm = max(-MAX_ROT_PWM, min(MAX_ROT_PWM, target_left_pwm))
