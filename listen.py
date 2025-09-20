@@ -34,28 +34,20 @@ TICKS_PER_REV = 20          # Encoder ticks per wheel revolution (effective edge
 DIST_PER_TICK = math.pi * WHEEL_DIAMETER_M / TICKS_PER_REV
 
 # TODO: Tune Rotation PID defaults
-Kp_rot = 15  
+Kp_rot = 10  
 Ki_rot = 0 
 Kd_rot = 0
-ROT_TOL_DEG = 3
+ROT_TOL_DEG = 5           # Stop when |error| <= tolerance
 ROT_TOL_RAD = math.radians(ROT_TOL_DEG)
-MAX_ROT_PWM = 60
-ROT_SETTLE_RATE = math.radians(5.0)
-ROT_SETTLE_TIME = 0.15
-ROT_MAX_TIME = 5.0
+MAX_ROT_PWM = 40            # Cap rotational output PWM
+ROT_SETTLE_RATE = math.radians(5.0)  # rad/s threshold for "nearly stopped"
+ROT_SETTLE_TIME = 0.15      # seconds to stay within tolerance before declaring done
+ROT_MAX_TIME = 5.0  # seconds max allowed for a rotation
 
 # PID Constants (default values, will be overridden by client)
 use_PID = 0
 KP, Ki, KD = 0, 0, 0
 MAX_CORRECTION = 30  # Maximum PWM correction value
-
-# rotation smoothing parameters
-ROT_RAMP_RATE = 250          # PWM units/sec limit just for rotation
-ROT_MIN_PWM = 14             # Base minimum for rotation (can be lower than drive MIN_PWM_THRESHOLD)
-ROT_MIN_PWM_NEAR = 8         # Reduced minimum when almost done
-ROT_NEAR_FACTOR = 0.35       # When |error| < this * initial_target => use lowered min
-ROT_STATIC_FF = 6            # Static friction feedforward (added with sign)
-ROT_U_ALPHA = 0.25           # Low-pass filter factor for u (0..1), smaller = smoother
 
 # Global variables
 running = True
@@ -81,10 +73,6 @@ theta_rad = 0.0             # Integrated heading (relative within a rotation com
 last_left_count = 0         # For incremental delta counts
 last_right_count = 0
 rot_start_time = None
-rot_initial_target_abs = 0.0   # store magnitude for scaling near end
-rot_prev_u = 0.0               # for filtering
-rot_left_cmd = 0.0
-rot_right_cmd = 0.0
 
 def rot_debug(msg):
     if DEBUG_ROT:
@@ -216,11 +204,6 @@ def rotation_begin():
     # Prepare rotation state (do not reset encoders; we integrate deltas)
     global rot_integral, rot_last_error, theta_rad, rot_last_theta, rot_last_time
     global last_left_count, last_right_count, rot_in_progress, rot_done, rot_start_time
-    global rot_initial_target_abs, rot_prev_u, rot_left_cmd, rot_right_cmd
-    rot_initial_target_abs = abs(rot_target_rad)
-    rot_prev_u = 0.0
-    rot_left_cmd = 0.0
-    rot_right_cmd = 0.0
     rot_integral = 0.0
     rot_last_error = 0.0
     theta_rad = 0.0
@@ -282,56 +265,19 @@ def pid_control():
             theta_rad += dtheta
 
             error = rot_target_rad - theta_rad
-            # Freeze integral inside tight band to avoid chattering
-            if abs(error) > ROT_TOL_RAD * 0.6:
-                rot_integral += error * dt
+            rot_integral += error * dt
             rot_integral = max(-MAX_ROT_PWM, min(rot_integral, MAX_ROT_PWM))
-
             d_error = (error - rot_last_error) / dt
-            u_raw = Kp_rot * error + Ki_rot * rot_integral + Kd_rot * d_error
+            u = Kp_rot * error + Ki_rot * rot_integral + Kd_rot * d_error
             rot_last_error = error
 
-            # Add static friction feedforward if there is still meaningful error
-            if abs(error) > ROT_TOL_RAD * 0.5:
-                u_raw += math.copysign(ROT_STATIC_FF, u_raw if u_raw != 0 else error)
-
-            # Low-pass filter (smooth sudden jumps)
-            u = rot_prev_u + ROT_U_ALPHA * (u_raw - rot_prev_u)
-            rot_prev_u = u
-
-            # Clamp
             u = max(-MAX_ROT_PWM, min(u, MAX_ROT_PWM))
 
-            # Desired wheel PWMs before ramp
-            desired_left = -u
-            desired_right = +u
+            target_left_pwm = -u
+            target_right_pwm = +u
 
-            # Slew-rate limit (ramp)
-            max_delta = ROT_RAMP_RATE * dt
-            global rot_left_cmd, rot_right_cmd
-            def slew(current, target, lim):
-                diff = target - current
-                if abs(diff) <= lim:
-                    return target
-                return current + math.copysign(lim, diff)
-            rot_left_cmd = slew(rot_left_cmd, desired_left, max_delta)
-            rot_right_cmd = slew(rot_right_cmd, desired_right, max_delta)
-
-            # Adaptive minimum PWM near target
-            near_phase = (rot_initial_target_abs > 0 and 
-                          abs(error) < ROT_NEAR_FACTOR * rot_initial_target_abs)
-            adaptive_min = ROT_MIN_PWM_NEAR if near_phase else ROT_MIN_PWM
-
-            def apply_rot_min(p):
-                if abs(p) < 1e-3:
-                    return 0
-                if abs(p) < adaptive_min:
-                    return math.copysign(adaptive_min, p)
-                return p
-
-            final_left_pwm = apply_rot_min(rot_left_cmd)
-            final_right_pwm = apply_rot_min(rot_right_cmd)
-
+            final_left_pwm = apply_min_threshold(target_left_pwm, MIN_PWM_THRESHOLD)
+            final_right_pwm = apply_min_threshold(target_right_pwm, MIN_PWM_THRESHOLD)
             set_motors(final_left_pwm, final_right_pwm)
 
             now = current_time
@@ -342,23 +288,16 @@ def pid_control():
             within_error = abs(error) <= ROT_TOL_RAD
             nearly_still = abs(dtheta_rate) <= ROT_SETTLE_RATE
 
-            # Soft zeroing: if very close & low rate, allow commands to decay to 0 before hard brake
             if within_error and nearly_still:
-                if abs(rot_left_cmd) < adaptive_min + 1 and abs(rot_right_cmd) < adaptive_min + 1:
-                    if not hasattr(pid_control, "_settle_start") or pid_control._settle_start is None:
-                        pid_control._settle_start = now
-                    elif (now - pid_control._settle_start) >= ROT_SETTLE_TIME:
-                        set_motors(0, 0)
-                        pid_control._settle_start = None
-                        rotation_finish()
-                else:
-                    # Encourage decay toward zero (target = 0) while staying in rotate mode
-                    rot_left_cmd = slew(rot_left_cmd, 0, max_delta)
-                    rot_right_cmd = slew(rot_right_cmd, 0, max_delta)
+                if not hasattr(pid_control, "_settle_start") or pid_control._settle_start is None:
+                    pid_control._settle_start = now
+                elif (now - pid_control._settle_start) >= ROT_SETTLE_TIME:
+                    set_motors(0, 0)
+                    pid_control._settle_start = None
+                    rotation_finish()
             else:
                 pid_control._settle_start = None
-                print(f"[ROT] err={error:.4f} rate={dtheta_rate:.4f} u={u:.2f}")
-
+                print(f"[ROT] within_error={within_error}, nearly_still={nearly_still}, error_rad={error:.4f}, dtheta_rate={dtheta_rate:.4f}")
             if rot_start_time is not None and (current_time - rot_start_time) > ROT_MAX_TIME:
                 print("[ROT] Timeout reached, forcing finish.")
                 set_motors(0,0)
