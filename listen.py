@@ -28,7 +28,7 @@ LEFT_ENCODER = 26
 RIGHT_ENCODER = 16
 
 # TODO: Mechanical/encoder params (set these for our robot)
-BASELINE_M = 0.135          # Wheel separation (meters) - example, calibrate on your robot
+BASELINE_M = 0.16          # Wheel separation (meters) - example, calibrate on your robot
 WHEEL_DIAMETER_M = 0.065    # Wheel diameter (meters) - example, calibrate
 TICKS_PER_REV = 20          # Encoder ticks per wheel revolution (effective edges you count)
 DIST_PER_TICK = math.pi * WHEEL_DIAMETER_M / TICKS_PER_REV
