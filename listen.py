@@ -50,7 +50,7 @@ KP, Ki, KD = 0, 0, 0
 MAX_CORRECTION = 30  # Maximum PWM correction value
 
 # rotation smoothing parameters
-ROT_RAMP_RATE = 100          # PWM units/sec limit just for rotation
+ROT_RAMP_RATE = 250          # PWM units/sec limit just for rotation
 ROT_MIN_PWM = 14             # Base minimum for rotation (can be lower than drive MIN_PWM_THRESHOLD)
 ROT_MIN_PWM_NEAR = 8         # Reduced minimum when almost done
 ROT_NEAR_FACTOR = 0.35       # When |error| < this * initial_target => use lowered min
