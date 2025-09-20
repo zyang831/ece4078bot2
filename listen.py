@@ -15,6 +15,7 @@ CAMERA_PORT = 8001
 PID_CONFIG_PORT = 8002
 ROTATE_PORT = 8003           # New: rotation command server (relative angle in degrees)
 PID_ROT_CONFIG_PORT = 8004   # New: rotation PID config server
+ROTATE_STATUS_PORT = 8005    # New: rotation status query server
 
 # Pins
 RIGHT_MOTOR_ENA = 18
@@ -27,20 +28,21 @@ LEFT_ENCODER = 26
 RIGHT_ENCODER = 16
 
 # TODO: Mechanical/encoder params (set these for our robot)
-BASELINE_M = 0.16          # Wheel separation (meters) - example, calibrate on your robot
+BASELINE_M = 0.135          # Wheel separation (meters) - example, calibrate on your robot
 WHEEL_DIAMETER_M = 0.065    # Wheel diameter (meters) - example, calibrate
 TICKS_PER_REV = 20          # Encoder ticks per wheel revolution (effective edges you count)
 DIST_PER_TICK = math.pi * WHEEL_DIAMETER_M / TICKS_PER_REV
 
 # TODO: Tune Rotation PID defaults
-Kp_rot = 60.0
-Ki_rot = 0.0
-Kd_rot = 12.0
+Kp_rot = 0  
+Ki_rot = 0 
+Kd_rot = 0
 ROT_TOL_DEG = 1.5           # Stop when |error| <= tolerance
 ROT_TOL_RAD = math.radians(ROT_TOL_DEG)
-MAX_ROT_PWM = 80            # Cap rotational output PWM
+MAX_ROT_PWM = 40            # Cap rotational output PWM
 ROT_SETTLE_RATE = math.radians(5.0)  # rad/s threshold for "nearly stopped"
 ROT_SETTLE_TIME = 0.15      # seconds to stay within tolerance before declaring done
+ROT_MAX_TIME = 5.0  # seconds max allowed for a rotation
 
 # PID Constants (default values, will be overridden by client)
 use_PID = 0
@@ -70,6 +72,12 @@ rot_done = False
 theta_rad = 0.0             # Integrated heading (relative within a rotation command)
 last_left_count = 0         # For incremental delta counts
 last_right_count = 0
+rot_start_time = None
+
+def rot_debug(msg):
+    if DEBUG_ROT:
+        print(f"[ROTDBG] {msg}")
+DEBUG_ROT = True
 
 def setup_gpio():
     GPIO.setmode(GPIO.BCM)
@@ -195,7 +203,7 @@ def counts_to_dtheta_rad(dleft, dright):
 def rotation_begin():
     # Prepare rotation state (do not reset encoders; we integrate deltas)
     global rot_integral, rot_last_error, theta_rad, rot_last_theta, rot_last_time
-    global last_left_count, last_right_count, rot_in_progress, rot_done
+    global last_left_count, last_right_count, rot_in_progress, rot_done, rot_start_time
     rot_integral = 0.0
     rot_last_error = 0.0
     theta_rad = 0.0
@@ -205,12 +213,15 @@ def rotation_begin():
     last_right_count = right_count
     rot_in_progress = True
     rot_done = False
+    rot_start_time = monotonic()
+    rot_debug(f"BEGIN target_deg={math.degrees(rot_target_rad):.2f} left_count={left_count} right_count={right_count}")
 
 def rotation_finish():
     global rot_in_progress, rot_done, control_mode
     rot_in_progress = False
     rot_done = True
     control_mode = 'velocity'
+    rot_debug(f"FINISH theta_deg={math.degrees(theta_rad):.2f} target_deg={math.degrees(rot_target_rad):.2f} error_deg={(math.degrees(rot_target_rad-theta_rad)):.2f}")
 
 ###################################################################
 def pid_control():
@@ -295,12 +306,14 @@ def pid_control():
                     rotation_finish()
             else:
                 pid_control._settle_start = None
-
-            # Debug (optional)
-            print(f"[ROT] err_deg={math.degrees(error):.2f}, u={u:.1f}, theta_deg={math.degrees(theta_rad):.2f}")
-
+                print(f"[ROT] within_error={within_error}, nearly_still={nearly_still}, error_deg={math.degrees(error):.2f}, dtheta_rate={dtheta_rate:.2f}")
+            # Timeout safeguard
+            if rot_start_time is not None and (current_time - rot_start_time) > ROT_MAX_TIME:
+                print("[ROT] Timeout reached, forcing finish.")
+                set_motors(0,0)
+                rotation_finish()
             time.sleep(0.01)
-            continue  # skip velocity branch while rotating
+            continue
 
         # VELOCITY MODE: existing behavior (with straight-line/turn correction)
         if not use_PID:
@@ -543,51 +556,62 @@ def wheel_server():
     server_socket.close()
 ###################################################################################################
 def rotation_server():
-    global control_mode, rot_target_rad, rot_done
-
+    global control_mode, rot_target_rad
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((HOST, ROTATE_PORT))
     server_socket.listen(1)
     print(f"Rotation server started on port {ROTATE_PORT}")
-
     while running:
         try:
             client_socket, _ = server_socket.accept()
             try:
                 data = client_socket.recv(4)
                 if not data or len(data) != 4:
+                    client_socket.sendall(struct.pack("!i", 0))
                     client_socket.close()
                     continue
-
                 target_deg = struct.unpack("!f", data)[0]
+                rot_debug(f"COMMAND received target_deg={target_deg:.2f}")
                 rot_target_rad = math.radians(target_deg)
-
-                # Start rotation
                 control_mode = 'rotate'
                 rotation_begin()
-
-                # Wait until rotation finishes or connection drops
-                while running and control_mode == 'rotate':
-                    time.sleep(0.01)
-
-                # Reply with status and achieved angle
-                status = 1 if rot_done else 0
-                achieved_deg = math.degrees(theta_rad)
-                response = struct.pack("!if", status, float(achieved_deg))
-                client_socket.sendall(response)
-
-            except Exception as e:
+                # Immediate ACK (1 = accepted)
+                client_socket.sendall(struct.pack("!i", 1))
+            except:
                 try:
-                    response = struct.pack("!if", 0, 0.0)
-                    client_socket.sendall(response)
+                    client_socket.sendall(struct.pack("!i", 0))
                 except:
                     pass
             finally:
                 client_socket.close()
         except Exception as e:
             print(f"Rotation server error: {str(e)}")
+    server_socket.close()
 
+def rotation_status_server():
+    # Respond with: in_progress(int), done(int), current_deg(float), target_deg(float)
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket.bind((HOST, ROTATE_STATUS_PORT))
+    server_socket.listen(1)
+    print(f"Rotation status server started on port {ROTATE_STATUS_PORT}")
+    while running:
+        try:
+            client_socket, _ = server_socket.accept()
+            try:
+                in_progress = 1 if rot_in_progress else 0
+                done = 1 if rot_done else 0
+                current_deg = math.degrees(theta_rad)
+                target_deg = math.degrees(rot_target_rad) if rot_in_progress or rot_done else 0.0
+                payload = struct.pack("!iiff", in_progress, done, float(current_deg), float(target_deg))
+                client_socket.sendall(payload)
+            except Exception as e:
+                pass
+            finally:
+                client_socket.close()
+        except Exception as e:
+            print(f"Rotation status server error: {str(e)}")
     server_socket.close()
 
 def pid_rot_config_server():
@@ -655,7 +679,11 @@ def main():
         rotation_thread = threading.Thread(target=rotation_server)
         rotation_thread.daemon = True
         rotation_thread.start()
-        
+
+        # Start rotation status server
+        rotation_status_thread = threading.Thread(target=rotation_status_server)
+        rotation_status_thread.daemon = True
+        rotation_status_thread.start()
         # Start wheel server (main thread)
         wheel_server()
         
