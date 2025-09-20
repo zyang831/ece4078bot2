@@ -34,7 +34,7 @@ TICKS_PER_REV = 20          # Encoder ticks per wheel revolution (effective edge
 DIST_PER_TICK = math.pi * WHEEL_DIAMETER_M / TICKS_PER_REV
 
 # TODO: Tune Rotation PID defaults
-Kp_rot = 0  
+Kp_rot = 20  
 Ki_rot = 0 
 Kd_rot = 0
 ROT_TOL_DEG = 1.5           # Stop when |error| <= tolerance
