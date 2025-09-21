@@ -508,15 +508,15 @@ def main():
         pid_rot_config_thread.daemon = True
         pid_rot_config_thread.start()
 
-        # Start rotation server (angle commands)
-        rotation_thread = threading.Thread(target=rotation_server)
-        rotation_thread.daemon = True
-        rotation_thread.start()
+        # # Start rotation server (angle commands)
+        # rotation_thread = threading.Thread(target=rotation_server)
+        # rotation_thread.daemon = True
+        # rotation_thread.start()
 
-        # Start rotation status server
-        rotation_status_thread = threading.Thread(target=rotation_status_server)
-        rotation_status_thread.daemon = True
-        rotation_status_thread.start()
+        # # Start rotation status server
+        # rotation_status_thread = threading.Thread(target=rotation_status_server)
+        # rotation_status_thread.daemon = True
+        # rotation_status_thread.start()
         # Start wheel server (main thread)
         wheel_server()
         
