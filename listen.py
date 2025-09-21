@@ -228,11 +228,11 @@ def pid_control():
                 last_error = error
 
                 if current_movement == 'turnleft':
-                    target_left_pwm = left_pwm + correction
+                    target_left_pwm = left_pwm - correction
                     target_right_pwm = right_pwm + correction        
                 elif current_movement == 'turnright':       
                     target_left_pwm = left_pwm - correction
-                    target_right_pwm = right_pwm - correction
+                    target_right_pwm = right_pwm + correction
 
             else:
                 # Reset when stopped (velocity mode only)
