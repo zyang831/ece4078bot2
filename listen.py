@@ -53,8 +53,8 @@ MIN_PWM_THRESHOLD = 15
 current_movement, prev_movement = 'stop', 'stop'
 
 # Predictive counter-brake globals (added)
-BRAKE_GAIN = 0.5            # Tunable: fraction of last PWM to use for counter-brake
-BRAKE_DURATION_MS = 100     # Duration of counter-brake pulse in milliseconds
+BRAKE_GAIN = 0.7            # Tunable: fraction of last PWM to use for counter-brake
+BRAKE_DURATION_MS = 300     # Duration of counter-brake pulse in milliseconds
 brake_start_time = None
 last_nonzero_left_pwm = 0
 last_nonzero_right_pwm = 0
