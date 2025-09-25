@@ -738,369 +738,369 @@ if __name__ == "__main__":
 #         return pwm_value
 
 ###################################################################
-def pid_control():
-    # Only applies for forward/backward, not turning
-    global left_pwm, right_pwm, left_count, right_count, use_PID, KP, KI, KD, prev_movement, current_movement
-    global last_left_count, last_right_count
+# def pid_control():
+#     # Only applies for forward/backward, not turning
+#     global left_pwm, right_pwm, left_count, right_count, use_PID, KP, KI, KD, prev_movement, current_movement
+#     global last_left_count, last_right_count
 
-    integral = 0
-    last_error = 0
-    last_time = monotonic()
+#     integral = 0
+#     last_error = 0
+#     last_time = monotonic()
     
-    # Ramping variables & params
-    ramp_left_pwm = 0
-    ramp_right_pwm = 0
-    previous_left_target = 0
-    previous_right_target = 0
+#     # Ramping variables & params
+#     ramp_left_pwm = 0
+#     ramp_right_pwm = 0
+#     previous_left_target = 0
+#     previous_right_target = 0
     
-    while running:          
-        current_time = monotonic()
-        dt = current_time - last_time
-        last_time = current_time
-        dt = max(dt, 1e-3)
+#     while running:          
+#         current_time = monotonic()
+#         dt = current_time - last_time
+#         last_time = current_time
+#         dt = max(dt, 1e-3)
 
-        # Compute movement state from commanded wheel PWM (for velocity mode)
-        prev_movement = current_movement
-        if (left_pwm > 0 and right_pwm > 0): current_movement = 'forward'
-        elif (left_pwm < 0 and right_pwm < 0): current_movement = 'backward'
-        elif (left_pwm < 0 and right_pwm > 0): current_movement = 'turnleft'
-        elif (left_pwm > 0 and right_pwm < 0): current_movement = 'turnright'
-        elif (left_pwm == 0 and right_pwm == 0): current_movement = 'stop'
+#         # Compute movement state from commanded wheel PWM (for velocity mode)
+#         prev_movement = current_movement
+#         if (left_pwm > 0 and right_pwm > 0): current_movement = 'forward'
+#         elif (left_pwm < 0 and right_pwm < 0): current_movement = 'backward'
+#         elif (left_pwm < 0 and right_pwm > 0): current_movement = 'turnleft'
+#         elif (left_pwm > 0 and right_pwm < 0): current_movement = 'turnright'
+#         elif (left_pwm == 0 and right_pwm == 0): current_movement = 'stop'
 
-        if not use_PID:
-            target_left_pwm = left_pwm
-            target_right_pwm = right_pwm
-        else:
-            if current_movement == 'forward' or current_movement == 'backward':
-                error = left_count - right_count
-                proportional = KP * error
-                integral += KI * error * dt
-                integral = max(-MAX_CORRECTION, min(integral, MAX_CORRECTION))  # Anti-windup
-                derivative = KD * (error - last_error) / dt if dt > 0 else 0
-                correction = proportional + integral + derivative
-                correction = max(-MAX_CORRECTION, min(correction, MAX_CORRECTION))
-                last_error = error
+#         if not use_PID:
+#             target_left_pwm = left_pwm
+#             target_right_pwm = right_pwm
+#         else:
+#             if current_movement == 'forward' or current_movement == 'backward':
+#                 error = left_count - right_count
+#                 proportional = KP * error
+#                 integral += KI * error * dt
+#                 integral = max(-MAX_CORRECTION, min(integral, MAX_CORRECTION))  # Anti-windup
+#                 derivative = KD * (error - last_error) / dt if dt > 0 else 0
+#                 correction = proportional + integral + derivative
+#                 correction = max(-MAX_CORRECTION, min(correction, MAX_CORRECTION))
+#                 last_error = error
 
-                if current_movement == 'forward':
-                    target_left_pwm = left_pwm - correction
-                    target_right_pwm = right_pwm + correction        
-                elif current_movement == 'backward':       
-                    target_left_pwm = left_pwm + correction
-                    target_right_pwm = right_pwm - correction
+#                 if current_movement == 'forward':
+#                     target_left_pwm = left_pwm - correction
+#                     target_right_pwm = right_pwm + correction        
+#                 elif current_movement == 'backward':       
+#                     target_left_pwm = left_pwm + correction
+#                     target_right_pwm = right_pwm - correction
             
-            elif current_movement == 'turnleft' or current_movement == 'turnright':
-                error = left_count - right_count
-                proportional = KP_rot * error
-                integral += KI_rot * error * dt
-                integral = max(-MAX_CORRECTION, min(integral, MAX_CORRECTION))  # Anti-windup
-                derivative = KD_rot * (error - last_error) / dt if dt > 0 else 0
-                correction = proportional + integral + derivative
-                correction = max(-MAX_CORRECTION, min(correction, MAX_CORRECTION))
-                last_error = error
+#             elif current_movement == 'turnleft' or current_movement == 'turnright':
+#                 error = left_count - right_count
+#                 proportional = KP_rot * error
+#                 integral += KI_rot * error * dt
+#                 integral = max(-MAX_CORRECTION, min(integral, MAX_CORRECTION))  # Anti-windup
+#                 derivative = KD_rot * (error - last_error) / dt if dt > 0 else 0
+#                 correction = proportional + integral + derivative
+#                 correction = max(-MAX_CORRECTION, min(correction, MAX_CORRECTION))
+#                 last_error = error
 
-                if current_movement == 'turnleft':
-                    target_left_pwm = left_pwm + correction
-                    target_right_pwm = right_pwm + correction        
-                elif current_movement == 'turnright':       
-                    target_left_pwm = left_pwm - correction
-                    target_right_pwm = right_pwm - correction
+#                 if current_movement == 'turnleft':
+#                     target_left_pwm = left_pwm + correction
+#                     target_right_pwm = right_pwm + correction        
+#                 elif current_movement == 'turnright':       
+#                     target_left_pwm = left_pwm - correction
+#                     target_right_pwm = right_pwm - correction
 
-            else:
-                # Reset when stopped (velocity mode only)
-                integral = 0
-                last_error = 0
-                reset_encoder()
-                target_left_pwm = left_pwm
-                target_right_pwm = right_pwm
+#             else:
+#                 # Reset when stopped (velocity mode only)
+#                 integral = 0
+#                 last_error = 0
+#                 reset_encoder()
+#                 target_left_pwm = left_pwm
+#                 target_right_pwm = right_pwm
         
-        if use_ramping and use_PID:
-            # PWM Ramping Logic
-            max_change_per_cycle = RAMP_RATE * dt
+#         if use_ramping and use_PID:
+#             # PWM Ramping Logic
+#             max_change_per_cycle = RAMP_RATE * dt
             
-            # Calculate differences for both motors
-            left_diff = target_left_pwm - ramp_left_pwm
-            right_diff = target_right_pwm - ramp_right_pwm
+#             # Calculate differences for both motors
+#             left_diff = target_left_pwm - ramp_left_pwm
+#             right_diff = target_right_pwm - ramp_right_pwm
             
-            # Determine if either motor needs ramping
-            left_needs_ramp = abs(left_diff) > MIN_RAMP_THRESHOLD
-            right_needs_ramp = abs(right_diff) > MIN_RAMP_THRESHOLD
+#             # Determine if either motor needs ramping
+#             left_needs_ramp = abs(left_diff) > MIN_RAMP_THRESHOLD
+#             right_needs_ramp = abs(right_diff) > MIN_RAMP_THRESHOLD
             
-            # Check for direction change conditions (but not stops)
-            left_direction_change = (target_left_pwm * previous_left_target < 0) and target_left_pwm != 0 and previous_left_target != 0
-            right_direction_change = (target_right_pwm * previous_right_target < 0) and target_right_pwm != 0 and previous_right_target != 0
+#             # Check for direction change conditions (but not stops)
+#             left_direction_change = (target_left_pwm * previous_left_target < 0) and target_left_pwm != 0 and previous_left_target != 0
+#             right_direction_change = (target_right_pwm * previous_right_target < 0) and target_right_pwm != 0 and previous_right_target != 0
             
-            # Apply immediate changes for direction changes only (for safety)
-            if left_direction_change:
-                ramp_left_pwm = target_left_pwm
-            if right_direction_change:
-                ramp_right_pwm = target_right_pwm
+#             # Apply immediate changes for direction changes only (for safety)
+#             if left_direction_change:
+#                 ramp_left_pwm = target_left_pwm
+#             if right_direction_change:
+#                 ramp_right_pwm = target_right_pwm
             
-            # Synchronized ramping - both motors ramp together or not at all
-            if not left_direction_change and not right_direction_change:
-                if left_needs_ramp or right_needs_ramp:
+#             # Synchronized ramping - both motors ramp together or not at all
+#             if not left_direction_change and not right_direction_change:
+#                 if left_needs_ramp or right_needs_ramp:
                     
-                    # Left motor ramping (including ramp-down to zero)
-                    if abs(left_diff) <= max_change_per_cycle:
-                        ramp_left_pwm = target_left_pwm  # Close enough, set to target
-                    else:
-                        # Ramp towards target (up or down)
-                        if left_diff > 0:
-                            ramp_left_pwm += max_change_per_cycle
-                        else:
-                            ramp_left_pwm -= max_change_per_cycle
+#                     # Left motor ramping (including ramp-down to zero)
+#                     if abs(left_diff) <= max_change_per_cycle:
+#                         ramp_left_pwm = target_left_pwm  # Close enough, set to target
+#                     else:
+#                         # Ramp towards target (up or down)
+#                         if left_diff > 0:
+#                             ramp_left_pwm += max_change_per_cycle
+#                         else:
+#                             ramp_left_pwm -= max_change_per_cycle
                     
-                    # Right motor ramping (including ramp-down to zero)
-                    if abs(right_diff) <= max_change_per_cycle:
-                        ramp_right_pwm = target_right_pwm  # Close enough, set to target
-                    else:
-                        # Ramp towards target (up or down)
-                        if right_diff > 0:
-                            ramp_right_pwm += max_change_per_cycle
-                        else:
-                            ramp_right_pwm -= max_change_per_cycle
-                else:
-                    # Neither motor needs ramping - apply targets directly
-                    ramp_left_pwm = target_left_pwm
-                    ramp_right_pwm = target_right_pwm
+#                     # Right motor ramping (including ramp-down to zero)
+#                     if abs(right_diff) <= max_change_per_cycle:
+#                         ramp_right_pwm = target_right_pwm  # Close enough, set to target
+#                     else:
+#                         # Ramp towards target (up or down)
+#                         if right_diff > 0:
+#                             ramp_right_pwm += max_change_per_cycle
+#                         else:
+#                             ramp_right_pwm -= max_change_per_cycle
+#                 else:
+#                     # Neither motor needs ramping - apply targets directly
+#                     ramp_left_pwm = target_left_pwm
+#                     ramp_right_pwm = target_right_pwm
             
-            # Store previous targets for next iteration
-            previous_left_target = target_left_pwm
-            previous_right_target = target_right_pwm
+#             # Store previous targets for next iteration
+#             previous_left_target = target_left_pwm
+#             previous_right_target = target_right_pwm
         
-        else:
-            # Ramping disabled - apply target values directly
-            ramp_left_pwm = target_left_pwm
-            ramp_right_pwm = target_right_pwm
+#         else:
+#             # Ramping disabled - apply target values directly
+#             ramp_left_pwm = target_left_pwm
+#             ramp_right_pwm = target_right_pwm
             
-        final_left_pwm = apply_min_threshold(ramp_left_pwm, MIN_PWM_THRESHOLD)
-        final_right_pwm = apply_min_threshold(ramp_right_pwm, MIN_PWM_THRESHOLD)
-        set_motors(final_left_pwm, final_right_pwm)
+#         final_left_pwm = apply_min_threshold(ramp_left_pwm, MIN_PWM_THRESHOLD)
+#         final_right_pwm = apply_min_threshold(ramp_right_pwm, MIN_PWM_THRESHOLD)
+#         set_motors(final_left_pwm, final_right_pwm)
         
-        if ramp_left_pwm != 0: # print for debugging purpose
-            print(f"(Left PWM, Right PWM)=({ramp_left_pwm:.2f},{ramp_right_pwm:.2f}), (Left Enc, Right Enc)=({left_count}, {right_count})")
+#         if ramp_left_pwm != 0: # print for debugging purpose
+#             print(f"(Left PWM, Right PWM)=({ramp_left_pwm:.2f},{ramp_right_pwm:.2f}), (Left Enc, Right Enc)=({left_count}, {right_count})")
         
-        time.sleep(0.01)
+#         time.sleep(0.01)
 
 
-def camera_stream_server():
-    # Initialize camera
-    picam2 = Picamera2()
-    camera_config = picam2.create_preview_configuration(lores={"size": (640,480)})
-    picam2.configure(camera_config)
-    picam2.start()
+# def camera_stream_server():
+#     # Initialize camera
+#     picam2 = Picamera2()
+#     camera_config = picam2.create_preview_configuration(lores={"size": (640,480)})
+#     picam2.configure(camera_config)
+#     picam2.start()
     
-    # Create socket for streaming
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((HOST, CAMERA_PORT))
-    server_socket.listen(1)
-    print(f"Camera stream server started on port {CAMERA_PORT}")
+#     # Create socket for streaming
+#     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+#     server_socket.bind((HOST, CAMERA_PORT))
+#     server_socket.listen(1)
+#     print(f"Camera stream server started on port {CAMERA_PORT}")
     
-    while running:
-        try:
-            client_socket, _ = server_socket.accept()
-            print(f"Camera stream client connected")
+#     while running:
+#         try:
+#             client_socket, _ = server_socket.accept()
+#             print(f"Camera stream client connected")
             
-            while running:
-                # Capture frame and convert to bytes
-                stream = io.BytesIO()
-                picam2.capture_file(stream, format='jpeg')
-                stream.seek(0)
-                jpeg_data = stream.getvalue()
-                jpeg_size = len(jpeg_data)
+#             while running:
+#                 # Capture frame and convert to bytes
+#                 stream = io.BytesIO()
+#                 picam2.capture_file(stream, format='jpeg')
+#                 stream.seek(0)
+#                 jpeg_data = stream.getvalue()
+#                 jpeg_size = len(jpeg_data)
                 
-                try:
-                    client_socket.sendall(struct.pack("!I", jpeg_size))
-                    client_socket.sendall(jpeg_data)
-                except:
-                    print("Camera stream client disconnected")
-                    break
+#                 try:
+#                     client_socket.sendall(struct.pack("!I", jpeg_size))
+#                     client_socket.sendall(jpeg_data)
+#                 except:
+#                     print("Camera stream client disconnected")
+#                     break
                 
-                # Small delay to avoid hogging CPU
-                time.sleep(0.01)
+#                 # Small delay to avoid hogging CPU
+#                 time.sleep(0.01)
                 
-        except Exception as e:
-            print(f"Camera stream server error: {str(e)}")
+#         except Exception as e:
+#             print(f"Camera stream server error: {str(e)}")
         
-        if 'client_socket' in locals() and client_socket:
-            client_socket.close()
+#         if 'client_socket' in locals() and client_socket:
+#             client_socket.close()
     
-    server_socket.close()
-    picam2.stop()
+#     server_socket.close()
+#     picam2.stop()
 
-def pid_config_server():
-    global use_PID, KP, KI, KD
+# def pid_config_server():
+#     global use_PID, KP, KI, KD
     
-    # Create socket for receiving PID configuration
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((HOST, PID_CONFIG_PORT))
-    server_socket.listen(1)
-    print(f"PID config server started on port {PID_CONFIG_PORT}")
+#     # Create socket for receiving PID configuration
+#     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+#     server_socket.bind((HOST, PID_CONFIG_PORT))
+#     server_socket.listen(1)
+#     print(f"PID config server started on port {PID_CONFIG_PORT}")
     
-    while running:
-        try:
-            client_socket, _ = server_socket.accept()
-            print(f"PID config client connected")
+#     while running:
+#         try:
+#             client_socket, _ = server_socket.accept()
+#             print(f"PID config client connected")
             
-            try:
-                # Receive PID constants (4 floats)
-                data = client_socket.recv(16)
-                if data and len(data) == 16:
-                    use_PID, KP, KI, KD = struct.unpack("!ffff", data)
-                    if use_PID: print(f"Updated PID constants: KP={KP}, KI={KI}, KD={KD}")
-                    else: print("The robot is not using PID.")
+#             try:
+#                 # Receive PID constants (4 floats)
+#                 data = client_socket.recv(16)
+#                 if data and len(data) == 16:
+#                     use_PID, KP, KI, KD = struct.unpack("!ffff", data)
+#                     if use_PID: print(f"Updated PID constants: KP={KP}, KI={KI}, KD={KD}")
+#                     else: print("The robot is not using PID.")
                     
-                    # Send acknowledgment (1 for success)
-                    response = struct.pack("!i", 1)
-                else:
-                    # Send failure response
-                    response = struct.pack("!i", 0)
+#                     # Send acknowledgment (1 for success)
+#                     response = struct.pack("!i", 1)
+#                 else:
+#                     # Send failure response
+#                     response = struct.pack("!i", 0)
                 
-                client_socket.sendall(response)
+#                 client_socket.sendall(response)
                     
-            except Exception as e:
-                print(f"PID config socket error: {str(e)}")
-                try:
-                    response = struct.pack("!i", 0)
-                    client_socket.sendall(response)
-                except:
-                    pass
+#             except Exception as e:
+#                 print(f"PID config socket error: {str(e)}")
+#                 try:
+#                     response = struct.pack("!i", 0)
+#                     client_socket.sendall(response)
+#                 except:
+#                     pass
                     
-            client_socket.close()
+#             client_socket.close()
                     
-        except Exception as e:
-            print(f"PID config server error: {str(e)}")
+#         except Exception as e:
+#             print(f"PID config server error: {str(e)}")
     
-    server_socket.close()
+#     server_socket.close()
     
 
-def wheel_server():
-    global left_pwm, right_pwm, running, left_count, right_count
+# def wheel_server():
+#     global left_pwm, right_pwm, running, left_count, right_count
     
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((HOST, WHEEL_PORT))
-    server_socket.listen(1)
-    print(f"Wheel server started on port {WHEEL_PORT}")
+#     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+#     server_socket.bind((HOST, WHEEL_PORT))
+#     server_socket.listen(1)
+#     print(f"Wheel server started on port {WHEEL_PORT}")
     
-    while running:
-        try:
-            client_socket, _ = server_socket.accept()
-            print(f"Wheel client connected")
+#     while running:
+#         try:
+#             client_socket, _ = server_socket.accept()
+#             print(f"Wheel client connected")
             
-            while running:
-                try:
-                    # Receive speed (4 bytes for each value)
-                    data = client_socket.recv(8)
-                    if not data or len(data) != 8:
-                        print("Wheel client sending speed error")
-                        break
+#             while running:
+#                 try:
+#                     # Receive speed (4 bytes for each value)
+#                     data = client_socket.recv(8)
+#                     if not data or len(data) != 8:
+#                         print("Wheel client sending speed error")
+#                         break
                     
-                    # Unpack speed values and convert to PWM
-                    left_speed, right_speed = struct.unpack("!ff", data)
-                    # print(f"Received wheel: left_speed={left_speed:.4f}, right_speed={right_speed:.4f}")
-                    left_pwm, right_pwm = left_speed*100, right_speed*100
+#                     # Unpack speed values and convert to PWM
+#                     left_speed, right_speed = struct.unpack("!ff", data)
+#                     # print(f"Received wheel: left_speed={left_speed:.4f}, right_speed={right_speed:.4f}")
+#                     left_pwm, right_pwm = left_speed*100, right_speed*100
                     
-                    # Send encoder counts back
-                    response = struct.pack("!ii", left_count, right_count)
-                    client_socket.sendall(response)
+#                     # Send encoder counts back
+#                     response = struct.pack("!ii", left_count, right_count)
+#                     client_socket.sendall(response)
                     
-                except Exception as e:
-                    print(f"Wheel client disconnected")
-                    break
+#                 except Exception as e:
+#                     print(f"Wheel client disconnected")
+#                     break
                     
-        except Exception as e:
-            print(f"Wheel server error: {str(e)}")
+#         except Exception as e:
+#             print(f"Wheel server error: {str(e)}")
         
-        if 'client_socket' in locals() and client_socket:
-            client_socket.close()
+#         if 'client_socket' in locals() and client_socket:
+#             client_socket.close()
     
-    server_socket.close()
-###################################################################################################
-def pid_rot_config_server():
-    global Kp_rot, Ki_rot, Kd_rot
+#     server_socket.close()
+# ###################################################################################################
+# def pid_rot_config_server():
+#     global Kp_rot, Ki_rot, Kd_rot
     
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((HOST, PID_ROT_CONFIG_PORT))
-    server_socket.listen(1)
-    print(f"Rotation PID config server started on port {PID_ROT_CONFIG_PORT}")
+#     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+#     server_socket.bind((HOST, PID_ROT_CONFIG_PORT))
+#     server_socket.listen(1)
+#     print(f"Rotation PID config server started on port {PID_ROT_CONFIG_PORT}")
     
-    while running:
-        try:
-            client_socket, _ = server_socket.accept()
-            try:
-                data = client_socket.recv(12)
-                if data and len(data) == 12:
-                    Kp_rot, Ki_rot, Kd_rot = struct.unpack("!fff", data)
-                    print(f"Updated rotation PID: Kp={Kp_rot}, Ki={Ki_rot}, Kd={Kd_rot}")
+#     while running:
+#         try:
+#             client_socket, _ = server_socket.accept()
+#             try:
+#                 data = client_socket.recv(12)
+#                 if data and len(data) == 12:
+#                     Kp_rot, Ki_rot, Kd_rot = struct.unpack("!fff", data)
+#                     print(f"Updated rotation PID: Kp={Kp_rot}, Ki={Ki_rot}, Kd={Kd_rot}")
                     
-                    response = struct.pack("!i", 1)
-                else:
-                    response = struct.pack("!i", 0)
-                client_socket.sendall(response)
-            except Exception as e:
-                print(f"Rotation PID config socket error: {str(e)}")
-                try:
-                    response = struct.pack("!i", 0)
-                    client_socket.sendall(response)
-                except:
-                    pass
-            finally:
-                client_socket.close()
-        except Exception as e:
-            print(f"Rotation PID config server error: {str(e)}")
+#                     response = struct.pack("!i", 1)
+#                 else:
+#                     response = struct.pack("!i", 0)
+#                 client_socket.sendall(response)
+#             except Exception as e:
+#                 print(f"Rotation PID config socket error: {str(e)}")
+#                 try:
+#                     response = struct.pack("!i", 0)
+#                     client_socket.sendall(response)
+#                 except:
+#                     pass
+#             finally:
+#                 client_socket.close()
+#         except Exception as e:
+#             print(f"Rotation PID config server error: {str(e)}")
     
-    server_socket.close()
-###################################################################################################
+#     server_socket.close()
+# ###################################################################################################
 
-def main():
-    try:
-        setup_gpio()
+# def main():
+#     try:
+#         setup_gpio()
         
-        # Start PID control thread
-        pid_thread = threading.Thread(target=pid_control)
-        pid_thread.daemon = True
-        pid_thread.start()
+#         # Start PID control thread
+#         pid_thread = threading.Thread(target=pid_control)
+#         pid_thread.daemon = True
+#         pid_thread.start()
         
-        # Start camera streaming thread
-        camera_thread = threading.Thread(target=camera_stream_server)
-        camera_thread.daemon = True
-        camera_thread.start()
+#         # Start camera streaming thread
+#         camera_thread = threading.Thread(target=camera_stream_server)
+#         camera_thread.daemon = True
+#         camera_thread.start()
         
-        # Start PID configuration server thread
-        pid_config_thread = threading.Thread(target=pid_config_server)
-        pid_config_thread.daemon = True
-        pid_config_thread.start()
+#         # Start PID configuration server thread
+#         pid_config_thread = threading.Thread(target=pid_config_server)
+#         pid_config_thread.daemon = True
+#         pid_config_thread.start()
 
-        # Start rotation PID configuration server
-        pid_rot_config_thread = threading.Thread(target=pid_rot_config_server)
-        pid_rot_config_thread.daemon = True
-        pid_rot_config_thread.start()
+#         # Start rotation PID configuration server
+#         pid_rot_config_thread = threading.Thread(target=pid_rot_config_server)
+#         pid_rot_config_thread.daemon = True
+#         pid_rot_config_thread.start()
 
-        # # Start rotation server (angle commands)
-        # rotation_thread = threading.Thread(target=rotation_server)
-        # rotation_thread.daemon = True
-        # rotation_thread.start()
+#         # # Start rotation server (angle commands)
+#         # rotation_thread = threading.Thread(target=rotation_server)
+#         # rotation_thread.daemon = True
+#         # rotation_thread.start()
 
-        # # Start rotation status server
-        # rotation_status_thread = threading.Thread(target=rotation_status_server)
-        # rotation_status_thread.daemon = True
-        # rotation_status_thread.start()
-        # Start wheel server (main thread)
-        wheel_server()
+#         # # Start rotation status server
+#         # rotation_status_thread = threading.Thread(target=rotation_status_server)
+#         # rotation_status_thread.daemon = True
+#         # rotation_status_thread.start()
+#         # Start wheel server (main thread)
+#         wheel_server()
         
-    except KeyboardInterrupt:
-        print("Stopping...")
-    finally:
-        global running
-        running = False
-        GPIO.cleanup()
-        print("Cleanup complete")
+#     except KeyboardInterrupt:
+#         print("Stopping...")
+#     finally:
+#         global running
+#         running = False
+#         GPIO.cleanup()
+#         print("Cleanup complete")
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
 
 #############################################################################################################
 
