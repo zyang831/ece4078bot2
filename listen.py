@@ -53,7 +53,7 @@ MIN_PWM_THRESHOLD = 15
 current_movement, prev_movement = 'stop', 'stop'
 
 # Braking system configuration
-BRAKE_GAIN = 0.7            # Legacy: fraction of last PWM to use for counter-brake
+BRAKE_GAIN = 0.6            # Legacy: fraction of last PWM to use for counter-brake
 BRAKE_DURATION_MS = 300     # Legacy: Duration of counter-brake pulse in milliseconds
 brake_start_time = None
 last_nonzero_left_pwm = 0
