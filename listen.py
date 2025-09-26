@@ -6,12 +6,16 @@ import time
 from time import monotonic
 import RPi.GPIO as GPIO
 from picamera2 import Picamera2
+import math
 
 # Network Configuration
 HOST = '0.0.0.0'
 WHEEL_PORT = 8000
 CAMERA_PORT = 8001
 PID_CONFIG_PORT = 8002
+# ROTATE_PORT = 8003           # New: rotation command server (relative angle in degrees)
+PID_ROT_CONFIG_PORT = 8003   # New: rotation PID config server
+# ROTATE_STATUS_PORT = 8005    # New: rotation status query server
 
 # Pins
 RIGHT_MOTOR_ENA = 18
@@ -23,9 +27,18 @@ LEFT_MOTOR_IN4 = 24
 LEFT_ENCODER = 26
 RIGHT_ENCODER = 16
 
+# TODO: Mechanical/encoder params (set these for our robot)
+BASELINE_M = 0.16           # Wheel separation (meters) - example, calibrate on your robot
+WHEEL_DIAMETER_M = 0.065    # Wheel diameter (meters) - example, calibrate
+TICKS_PER_REV = 20          # Encoder ticks per wheel revolution (effective edges you count)
+DIST_PER_TICK = math.pi * WHEEL_DIAMETER_M / TICKS_PER_REV
+
+# TODO: Tune Rotation PID defaults
+KP_rot, KI_rot, KD_rot = 0, 0, 0
+
 # PID Constants (default values, will be overridden by client)
 use_PID = 0
-KP, Ki, KD = 0, 0, 0
+KP, KI, KD = 0, 0, 0
 MAX_CORRECTION = 30  # Maximum PWM correction value
 
 # Global variables
@@ -33,11 +46,40 @@ running = True
 left_pwm, right_pwm = 0, 0
 left_count, right_count = 0, 0
 prev_left_state, prev_right_state = None, None
-use_ramping = True
+use_ramping = False
 RAMP_RATE = 250  # PWM units per second (adjust this value to tune ramp speed)
 MIN_RAMP_THRESHOLD = 15  # Only ramp if change is greater than this
 MIN_PWM_THRESHOLD = 15
 current_movement, prev_movement = 'stop', 'stop'
+
+# Braking system configuration
+BRAKE_GAIN = 0.5            # Legacy: fraction of last PWM to use for counter-brake
+BRAKE_DURATION_MS = 100     # Legacy: Duration of counter-brake pulse in milliseconds
+brake_start_time = None
+last_nonzero_left_pwm = 0
+last_nonzero_right_pwm = 0
+
+# Velocity-based braking parameters
+USE_VELOCITY_BRAKING = True  # Set to False to disable velocity-based braking
+KV_LEFT = 15.0              # Braking gain for left wheel (PWM per count/s)
+KV_RIGHT = 15.0             # Braking gain for right wheel (PWM per count/s)
+KD_V_LEFT = 2.0             # Damping term for left wheel (PWM·s/count)
+KD_V_RIGHT = 2.0            # Damping term for right wheel (PWM·s/count)
+VELOCITY_THRESHOLD = 1.0    # Velocity below which we consider the wheel stopped (counts/s)
+STOPPED_TIME_THRESHOLD = 0.1  # Time (s) velocity must be below threshold before switching to active braking
+
+# Velocity tracking variables
+last_left_count = 0
+last_right_count = 0
+last_left_velocity = 0.0
+last_right_velocity = 0.0
+last_velocity_time = 0.0
+stopped_start_time = 0.0
+in_braking_phase = False
+
+# Debug print control
+last_debug_print_time = 0
+DEBUG_PRINT_INTERVAL = 0.3  # Print debug messages every 100ms
 
 def setup_gpio():
     GPIO.setmode(GPIO.BCM)
@@ -153,13 +195,25 @@ def apply_min_threshold(pwm_value, min_threshold):
     else:
         return pwm_value
 
+###################################################################
 def pid_control():
     # Only applies for forward/backward, not turning
     global left_pwm, right_pwm, left_count, right_count, use_PID, KP, KI, KD, prev_movement, current_movement
+    global last_left_count, last_right_count, last_left_velocity, last_right_velocity, last_velocity_time
+    global BRAKE_GAIN, BRAKE_DURATION_MS, brake_start_time, last_nonzero_left_pwm, last_nonzero_right_pwm
+    global KV_LEFT, KV_RIGHT, KD_V_LEFT, KD_V_RIGHT, VELOCITY_THRESHOLD, STOPPED_TIME_THRESHOLD
+    global in_braking_phase, stopped_start_time
     
     integral = 0
     last_error = 0
-    last_time = monotonic()
+    current_time = monotonic()
+    if last_velocity_time == 0:  # First run
+        last_velocity_time = current_time
+        dt = 0.01  # Small initial delta time
+    else:
+        dt = current_time - last_velocity_time
+        dt = max(dt, 1e-3)  # Avoid division by zero
+    last_velocity_time = current_time
     
     # Ramping variables & params
     ramp_left_pwm = 0
@@ -171,20 +225,27 @@ def pid_control():
         current_time = monotonic()
         dt = current_time - last_time
         last_time = current_time
-        
+        dt = max(dt, 1e-3)
+
+        # Compute movement state from commanded wheel PWM (for velocity mode)
         prev_movement = current_movement
         if (left_pwm > 0 and right_pwm > 0): current_movement = 'forward'
         elif (left_pwm < 0 and right_pwm < 0): current_movement = 'backward'
         elif (left_pwm < 0 and right_pwm > 0): current_movement = 'turnleft'
         elif (left_pwm > 0 and right_pwm < 0): current_movement = 'turnright'
         elif (left_pwm == 0 and right_pwm == 0): current_movement = 'stop'
-        
+
+        # Store last non-zero PWM values for brake calculation
+        if left_pwm != 0:
+            last_nonzero_left_pwm = left_pwm
+        if right_pwm != 0:
+            last_nonzero_right_pwm = right_pwm
+
         if not use_PID:
             target_left_pwm = left_pwm
             target_right_pwm = right_pwm
         else:
-            if current_movement == 'forward' or current_movement == 'backward' or current_movement == 'turnleft'or current_movement == 'turnright':
-                
+            if current_movement == 'forward' or current_movement == 'backward':
                 error = left_count - right_count
                 proportional = KP * error
                 integral += KI * error * dt
@@ -200,15 +261,26 @@ def pid_control():
                 elif current_movement == 'backward':       
                     target_left_pwm = left_pwm + correction
                     target_right_pwm = right_pwm - correction
-                elif current_movement == 'turnleft':
+            
+            elif current_movement == 'turnleft' or current_movement == 'turnright':
+                error = left_count - right_count
+                proportional = KP_rot * error
+                integral += KI_rot * error * dt
+                integral = max(-MAX_CORRECTION, min(integral, MAX_CORRECTION))  # Anti-windup
+                derivative = KD_rot * (error - last_error) / dt if dt > 0 else 0
+                correction = proportional + integral + derivative
+                correction = max(-MAX_CORRECTION, min(correction, MAX_CORRECTION))
+                last_error = error
+
+                if current_movement == 'turnleft':
                     target_left_pwm = left_pwm + correction
-                    target_right_pwm = right_pwm + correction 
-                elif current_movement == 'turnright':
+                    target_right_pwm = right_pwm + correction        
+                elif current_movement == 'turnright':       
                     target_left_pwm = left_pwm - correction
-                    target_right_pwm = right_pwm - correction 
+                    target_right_pwm = right_pwm - correction
 
             else:
-                # Reset when stopped
+                # Reset when stopped (velocity mode only)
                 integral = 0
                 last_error = 0
                 reset_encoder()
@@ -273,7 +345,90 @@ def pid_control():
             # Ramping disabled - apply target values directly
             ramp_left_pwm = target_left_pwm
             ramp_right_pwm = target_right_pwm
+
+        # Velocity-based braking logic when stopping
+        if current_movement == 'stop':
+            if prev_movement != 'stop':
+                # Just started stopping - initialize braking
+                brake_start_time = current_time
+                in_braking_phase = True
+                stopped_start_time = 0.0
+                # Reset integral and last_error when entering stop mode
+                integral = 0
+                last_error = 0
+                reset_encoder()
+                last_left_count = 0
+                last_right_count = 0
+                last_left_velocity = 0.0
+                last_right_velocity = 0.0
             
+            if in_braking_phase and USE_VELOCITY_BRAKING:
+                # Calculate wheel velocities in counts/s
+                left_ticks = left_count - last_left_count
+                right_ticks = right_count - last_right_count
+
+                left_velocity = left_ticks / dt if dt > 0 else 0.0
+                right_velocity = right_ticks / dt if dt > 0 else 0.0
+                
+                # Calculate acceleration (derivative of velocity) in counts/s²
+                left_accel = (left_velocity - last_left_velocity) / dt if dt > 0 else 0.0
+                right_accel = (right_velocity - last_right_velocity) / dt if dt > 0 else 0.0
+                
+                # Calculate braking PWM using PD control
+                left_brake_pwm = -KV_LEFT * left_velocity - KD_V_LEFT * left_accel
+                right_brake_pwm = -KV_RIGHT * right_velocity - KD_V_RIGHT * right_accel
+                
+                # Clamp braking PWM to reasonable limits
+                MAX_BRAKE_PWM = 60.0
+                left_brake_pwm = max(-MAX_BRAKE_PWM, min(left_brake_pwm, MAX_BRAKE_PWM))
+                right_brake_pwm = max(-MAX_BRAKE_PWM, min(right_brake_pwm, MAX_BRAKE_PWM))
+                
+                # Check if both wheels are below velocity threshold
+                if (abs(left_velocity) < VELOCITY_THRESHOLD and 
+                    abs(right_velocity) < VELOCITY_THRESHOLD):
+                    if stopped_start_time == 0.0:
+                        stopped_start_time = current_time
+                    elif (current_time - stopped_start_time) >= STOPPED_TIME_THRESHOLD:
+                        # Wheels have been stopped long enough, switch to active braking
+                        in_braking_phase = False
+                        target_left_pwm = 0
+                        target_right_pwm = 0
+                        left_brake_pwm = 0
+                        right_brake_pwm = 0
+                else:
+                    # Reset stopped timer if either wheel is still moving
+                    stopped_start_time = 0.0
+                
+                # Apply braking PWM
+                target_left_pwm = left_brake_pwm
+                target_right_pwm = right_brake_pwm
+                
+                # Update last values for next iteration
+                last_left_velocity = left_velocity
+                last_right_velocity = right_velocity
+                
+                # Print debug messages at controlled rate
+                current_time = monotonic()
+                if current_time - last_debug_print_time >= DEBUG_PRINT_INTERVAL:
+                    if in_braking_phase and USE_VELOCITY_BRAKING:
+                        print(f"Braking - Left: v={left_velocity:.1f}counts/s pwm={left_brake_pwm:.1f}, "
+                            f"Right: v={right_velocity:.1f}counts/s pwm={right_brake_pwm:.1f}")
+                    elif ramp_left_pwm != 0:  # Only print when moving
+                        print(f"(Left PWM, Right PWM)=({ramp_left_pwm:.2f},{ramp_right_pwm:.2f}), "
+                            f"(Left Enc, Right Enc)=({left_count}, {right_count})")
+                    last_debug_print_time = current_time
+            else:
+                # Legacy braking or not in braking phase - use active braking
+                target_left_pwm = 0
+                target_right_pwm = 0
+        
+        # Update last encoder counts for next iteration
+        last_left_count = left_count
+        last_right_count = right_count
+
+        final_left_pwm = apply_min_threshold(ramp_left_pwm, MIN_PWM_THRESHOLD)
+        final_right_pwm = apply_min_threshold(ramp_right_pwm, MIN_PWM_THRESHOLD)
+        set_motors(final_left_pwm, final_right_pwm)
         final_left_pwm = apply_min_threshold(ramp_left_pwm, MIN_PWM_THRESHOLD)
         final_right_pwm = apply_min_threshold(ramp_right_pwm, MIN_PWM_THRESHOLD)
         set_motors(final_left_pwm, final_right_pwm)
@@ -329,7 +484,6 @@ def camera_stream_server():
     
     server_socket.close()
     picam2.stop()
-
 
 def pid_config_server():
     global use_PID, KP, KI, KD
@@ -420,7 +574,43 @@ def wheel_server():
             client_socket.close()
     
     server_socket.close()
-
+###################################################################################################
+def pid_rot_config_server():
+    global Kp_rot, Ki_rot, Kd_rot
+    
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket.bind((HOST, PID_ROT_CONFIG_PORT))
+    server_socket.listen(1)
+    print(f"Rotation PID config server started on port {PID_ROT_CONFIG_PORT}")
+    
+    while running:
+        try:
+            client_socket, _ = server_socket.accept()
+            try:
+                data = client_socket.recv(12)
+                if data and len(data) == 12:
+                    Kp_rot, Ki_rot, Kd_rot = struct.unpack("!fff", data)
+                    print(f"Updated rotation PID: Kp={Kp_rot}, Ki={Ki_rot}, Kd={Kd_rot}")
+                    
+                    response = struct.pack("!i", 1)
+                else:
+                    response = struct.pack("!i", 0)
+                client_socket.sendall(response)
+            except Exception as e:
+                print(f"Rotation PID config socket error: {str(e)}")
+                try:
+                    response = struct.pack("!i", 0)
+                    client_socket.sendall(response)
+                except:
+                    pass
+            finally:
+                client_socket.close()
+        except Exception as e:
+            print(f"Rotation PID config server error: {str(e)}")
+    
+    server_socket.close()
+###################################################################################################
 
 def main():
     try:
@@ -440,7 +630,21 @@ def main():
         pid_config_thread = threading.Thread(target=pid_config_server)
         pid_config_thread.daemon = True
         pid_config_thread.start()
-        
+
+        # Start rotation PID configuration server
+        pid_rot_config_thread = threading.Thread(target=pid_rot_config_server)
+        pid_rot_config_thread.daemon = True
+        pid_rot_config_thread.start()
+
+        # # Start rotation server (angle commands)
+        # rotation_thread = threading.Thread(target=rotation_server)
+        # rotation_thread.daemon = True
+        # rotation_thread.start()
+
+        # # Start rotation status server
+        # rotation_status_thread = threading.Thread(target=rotation_status_server)
+        # rotation_status_thread.daemon = True
+        # rotation_status_thread.start()
         # Start wheel server (main thread)
         wheel_server()
         
@@ -452,6 +656,6 @@ def main():
         GPIO.cleanup()
         print("Cleanup complete")
 
-
 if __name__ == "__main__":
     main()
+
