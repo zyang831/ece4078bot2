@@ -202,11 +202,12 @@ def pid_control():
     global last_left_count, last_right_count, last_left_velocity, last_right_velocity, last_velocity_time
     global BRAKE_GAIN, BRAKE_DURATION_MS, brake_start_time, last_nonzero_left_pwm, last_nonzero_right_pwm
     global KV_LEFT, KV_RIGHT, KD_V_LEFT, KD_V_RIGHT, VELOCITY_THRESHOLD, STOPPED_TIME_THRESHOLD
-    global in_braking_phase, stopped_start_time
+    global in_braking_phase, stopped_start_time, last_time
     
     integral = 0
     last_error = 0
     current_time = monotonic()
+    last_time = current_time  # Initialize last_time
     if last_velocity_time == 0:  # First run
         last_velocity_time = current_time
         dt = 0.01  # Small initial delta time
